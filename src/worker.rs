@@ -5,12 +5,21 @@ use crate::{
 };
 use redis::{aio::MultiplexedConnection, AsyncCommands, Client};
 use std::{collections::HashMap, sync::Arc};
-use tokio::time::{self, Duration};
+use tokio::{
+    sync::broadcast,
+    time::{self, Duration},
+};
 
 pub struct Worker {
     config: AnyQueueConfig,
     redis_client: Client,
     processors: Arc<HashMap<String, Box<dyn JobProcessor>>>,
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+/// Graceful shutdown handle for the worker
+pub struct WorkerHandle {
+    shutdown_tx: broadcast::Sender<()>,
 }
 
 impl Worker {
@@ -19,14 +28,29 @@ impl Worker {
         redis_client: Client,
         processors: Arc<HashMap<String, Box<dyn JobProcessor>>>,
     ) -> Result<Self> {
+        let (shutdown_tx, _) = broadcast::channel(1);
         Ok(Self {
             config,
             redis_client,
             processors,
+            shutdown_tx,
         })
     }
 
+    /// Start the worker and return a handle for graceful shutdown
+    pub async fn start_with_handle(&self) -> Result<WorkerHandle> {
+        let handle = WorkerHandle {
+            shutdown_tx: self.shutdown_tx.clone(),
+        };
+        
+        Ok(handle)
+    }
+
     pub async fn start(&self) -> Result<()> {
+        self.start_internal().await
+    }
+
+    async fn start_internal(&self) -> Result<()> {
         log::info!("Worker started. Looking for jobs...");
 
         let mut redis_conn = self
@@ -36,8 +60,15 @@ impl Worker {
             .map_err(|e| Error::Connection(format!("Failed to get Redis connection: {}", e)))?;
 
         let mut consecutive_errors = 0;
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         loop {
+            // Check for shutdown signal
+            if let Ok(_) = shutdown_rx.try_recv() {
+                log::info!("Shutdown signal received. Finishing current jobs and stopping...");
+                break;
+            }
+
             let now = chrono::Utc::now().timestamp_millis();
 
             // Atomically claim jobs using Lua script to prevent race conditions
@@ -108,6 +139,9 @@ impl Worker {
                 time::sleep(self.config.worker_poll_interval).await;
             }
         }
+        
+        log::info!("Worker shutdown complete.");
+        Ok(())
     }
 
     async fn process_job(&self, job_data: &JobData) -> bool {
@@ -230,5 +264,21 @@ impl Worker {
             .map_err(|e| Error::Worker(format!("Failed to claim jobs atomically: {}", e)))?;
 
         Ok(claimed_jobs)
+    }
+}
+
+impl WorkerHandle {
+    /// Signal the worker to shutdown gracefully
+    pub async fn shutdown(&self) -> Result<()> {
+        match self.shutdown_tx.send(()) {
+            Ok(_) => {
+                log::info!("Shutdown signal sent to worker");
+                Ok(())
+            }
+            Err(_) => {
+                log::warn!("Failed to send shutdown signal - worker may have already stopped");
+                Ok(())
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{env, time::Duration};
 
 /// Configuration for AnyQueue
 #[derive(Debug, Clone)]
@@ -104,8 +104,102 @@ impl AnyQueueConfigBuilder {
         self
     }
 
+    /// Load configuration from environment variables
+    pub fn from_env(mut self) -> Self {
+        self.config = AnyQueueConfig::from_env();
+        self
+    }
+
+    /// Validate and build the final configuration
+    pub fn build_and_validate(self) -> Result<AnyQueueConfig, String> {
+        self.config.validate()?;
+        Ok(self.config)
+    }
+
     /// Build the final configuration
     pub fn build(self) -> AnyQueueConfig {
         self.config
+    }
+}
+
+impl AnyQueueConfig {
+    /// Create configuration from environment variables
+    pub fn from_env() -> Self {
+        let mut config = AnyQueueConfig::default();
+
+        if let Ok(redis_url) = env::var("ANYQUEUE_REDIS_URL") {
+            config.redis_url = redis_url;
+        }
+
+        if let Ok(max_retries) = env::var("ANYQUEUE_MAX_RETRIES") {
+            if let Ok(retries) = max_retries.parse::<u32>() {
+                config.max_retries = retries;
+            }
+        }
+
+        if let Ok(base_delay) = env::var("ANYQUEUE_BASE_DELAY_SECS") {
+            if let Ok(delay_secs) = base_delay.parse::<u64>() {
+                config.base_delay = Duration::from_secs(delay_secs);
+            }
+        }
+
+        if let Ok(max_delay) = env::var("ANYQUEUE_MAX_DELAY_SECS") {
+            if let Ok(delay_secs) = max_delay.parse::<u64>() {
+                config.max_delay = Duration::from_secs(delay_secs);
+            }
+        }
+
+        if let Ok(job_limit) = env::var("ANYQUEUE_JOB_PROCESSING_LIMIT") {
+            if let Ok(limit) = job_limit.parse::<usize>() {
+                config.job_processing_limit = limit;
+            }
+        }
+
+        if let Ok(poll_interval) = env::var("ANYQUEUE_WORKER_POLL_INTERVAL_SECS") {
+            if let Ok(interval_secs) = poll_interval.parse::<u64>() {
+                config.worker_poll_interval = Duration::from_secs(interval_secs);
+            }
+        }
+
+        if let Ok(max_errors) = env::var("ANYQUEUE_MAX_CONSECUTIVE_ERRORS") {
+            if let Ok(errors) = max_errors.parse::<u32>() {
+                config.max_consecutive_errors = errors;
+            }
+        }
+
+        config
+    }
+
+    /// Validate configuration values
+    pub fn validate(&self) -> Result<(), String> {
+        if self.redis_url.is_empty() {
+            return Err("Redis URL cannot be empty".to_string());
+        }
+
+        if self.max_retries == 0 {
+            return Err("Max retries must be greater than 0".to_string());
+        }
+
+        if self.base_delay.is_zero() {
+            return Err("Base delay must be greater than 0".to_string());
+        }
+
+        if self.max_delay < self.base_delay {
+            return Err("Max delay must be greater than or equal to base delay".to_string());
+        }
+
+        if self.job_processing_limit == 0 {
+            return Err("Job processing limit must be greater than 0".to_string());
+        }
+
+        if self.worker_poll_interval.is_zero() {
+            return Err("Worker poll interval must be greater than 0".to_string());
+        }
+
+        if self.max_consecutive_errors == 0 {
+            return Err("Max consecutive errors must be greater than 0".to_string());
+        }
+
+        Ok(())
     }
 }

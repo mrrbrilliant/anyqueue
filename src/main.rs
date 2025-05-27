@@ -1,5 +1,6 @@
 use anyqueue::{AnyQueue, Job, Result, GenericJobProcessor};
 use serde::{Deserialize, Serialize};
+use tokio::signal;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct DemoJob {
@@ -84,7 +85,24 @@ async fn main() -> Result<()> {
     println!("Note: Failed jobs will be retried with exponential backoff");
     println!("Press Ctrl+C to stop\n");
     
-    queue.start_worker().await?;
+    // Start worker with graceful shutdown handling
+    let worker_handle = tokio::spawn(async move {
+        queue.start_worker().await
+    });
 
+    // Wait for shutdown signal
+    match signal::ctrl_c().await {
+        Ok(()) => {
+            println!("\n🛑 Received Ctrl+C signal. Shutting down gracefully...");
+        }
+        Err(err) => {
+            eprintln!("Unable to listen for shutdown signal: {}", err);
+        }
+    }
+
+    // Cancel the worker task
+    worker_handle.abort();
+    
+    println!("✅ Shutdown complete.");
     Ok(())
 }

@@ -98,7 +98,7 @@ where
             metrics: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
-
+    #[allow(dead_code)]
     pub fn get_metrics(&self) -> HashMap<String, u64> {
         self.metrics.lock().unwrap().clone()
     }

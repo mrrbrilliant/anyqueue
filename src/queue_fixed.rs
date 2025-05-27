@@ -132,14 +132,14 @@ impl AnyQueue {
     pub async fn get_stats(&mut self) -> Result<QueueStats> {
         let retry_queue_size = self.retry_queue_size().await?;
         let dead_letter_queue_size = self.dead_letter_queue_size().await?;
-
+        
         // Count jobs that are due for processing now
         let now = chrono::Utc::now().timestamp_millis();
         let estimated_jobs_due_now: usize = self
             .connection
             .zcount(&self.config.retry_queue_key, 0, now)
             .await?;
-
+        
         Ok(QueueStats {
             retry_queue_size,
             dead_letter_queue_size,
@@ -151,16 +151,16 @@ impl AnyQueue {
     /// Check health status of the queue system
     pub async fn health_check(&mut self) -> HealthStatus {
         let now = chrono::Utc::now().timestamp_millis();
-
+        
         // Test Redis connectivity by attempting a simple operation
         let redis_connected = match redis::cmd("PING")
-            .query_async::<String>(&mut self.connection)
-            .await
+            .query_async::<_, String>(&mut self.connection)
+            .await 
         {
             Ok(_) => true,
             Err(_) => false,
         };
-
+        
         let (retry_queue_size, dead_letter_queue_size) = if redis_connected {
             (
                 self.retry_queue_size().await.unwrap_or(0),
@@ -169,7 +169,7 @@ impl AnyQueue {
         } else {
             (0, 0)
         };
-
+        
         HealthStatus {
             redis_connected,
             retry_queue_size,
@@ -236,12 +236,6 @@ impl AnyQueueBuilder {
     /// Set the maximum retry delay cap
     pub fn max_retry_delay(mut self, delay: std::time::Duration) -> Self {
         self.config = self.config.max_delay(delay);
-        self
-    }
-
-    /// Load configuration from environment variables
-    pub fn from_env(mut self) -> Self {
-        self.config = self.config.from_env();
         self
     }
 
